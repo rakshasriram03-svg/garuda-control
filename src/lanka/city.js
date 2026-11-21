@@ -11,7 +11,7 @@ function mulberry32(a) {
 }
 const hash2 = (a, b) => (Math.imul(a, 73856093) ^ Math.imul(b, 19349663)) >>> 0;
 
-export function makeMaterials(T) {
+function makeBaseMaterials(T) {
   const m = (map, o = {}) => new THREE.MeshStandardMaterial({ map, vertexColors: true, roughness: 0.92, metalness: 0, ...o });
   return {
     plaster: m(T.plaster), brick: m(T.brick), wood: m(T.wood), stone: m(T.stone, { roughness: 0.85 }),
@@ -21,6 +21,25 @@ export function makeMaterials(T) {
     gold: m(T.gold, { metalness: 0.8, roughness: 0.35, emissive: 0x2a1a00 }),
     water: new THREE.MeshStandardMaterial({ color: 0x2e8fa0, roughness: 0.08, metalness: 0.35, vertexColors: true }),
   };
+}
+
+// Wood, thatch and cloth get a burn shader: patchy glow while burning, then charred black.
+function burnable(mat, uniforms) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = uniforms.uTime;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nattribute float burn; varying float vBurn; varying vec3 vWP;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\n vBurn = burn; vWP = position;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying float vBurn; varying vec3 vWP; uniform float uTime;\nfloat h3(vec3 p){ return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }\nfloat vn(vec3 p){ vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y), mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z); }')
+      .replace('#include <color_fragment>', '#include <color_fragment>\n float nz = 0.6 * vn(vWP * 0.45) + 0.4 * vn(vWP * 1.7); float bb = clamp(vBurn * 1.7 - nz * 0.7, 0.0, 1.0);\n diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.025, 0.02, 0.018), smoothstep(0.1, 0.7, bb));')
+      .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n float fireAmt = smoothstep(0.02, 0.25, bb) * (1.0 - smoothstep(0.8, 1.0, bb)); float fl = 0.65 + 0.35 * sin(uTime * 9.0 + nz * 40.0);\n totalEmissiveRadiance += vec3(2.2, 0.8, 0.15) * fireAmt * fl;');
+  };
+}
+export function makeMaterials(T, uniforms) {
+  const m = makeBaseMaterials(T);
+  for (const k of ['wood', 'thatch', 'cloth']) burnable(m[k], uniforms);
+  return m;
 }
 
 // ---------- geometry helpers ----------
@@ -224,7 +243,10 @@ function denseBlock(ctx, rng, bx, bz) {
 export class City {
   constructor(scene, T) {
     this.scene = scene;
-    this.mats = makeMaterials(T);
+    this.uniforms = { uTime: { value: 0 } };
+    this.mats = makeMaterials(T, this.uniforms);
+    this.burnt = new Set();      // buildings that have burnt down (kept when a chunk is rebuilt)
+    this.dirty = new Set();      // burn attributes waiting to be uploaded
     this.groundMat = new THREE.MeshStandardMaterial({ map: T.ground, roughness: 1 });
     this.chunks = new Map();
     this.hash = new Map();
@@ -266,6 +288,14 @@ export class City {
       group.add(mesh);
       chunk.meshes[key] = mesh;
     }
+    for (const b of ctx.blds) {                 // fuel = share of the building that can burn
+      let total = 0, flam = 0;
+      for (const r of b.ranges) { total += r.count; if (FLAMMABLE[r.key]) flam += r.count; }
+      b.fuel = total ? flam / total : 0;
+      if (b.kind === 'brick' || b.kind === 'plaster' || b.kind === 'workshop') b.fuel *= 0.45;   // only doors, awnings and rooftop thatch burn
+      b.state = 0; b.progress = 0; b.key = cx + ',' + cz + ':' + b.id;
+      if (b.fuel > 0 && this.burnt.has(b.key)) { b.state = 2; b.progress = 1; this.setBurn(b, 1, true); }
+    }
     const gg = new THREE.PlaneGeometry(CHUNK, CHUNK).rotateX(-Math.PI / 2);
     const uv = gg.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * CB, uv.getY(i) * CB);
     const ground = new THREE.Mesh(gg, this.groundMat);
@@ -281,10 +311,21 @@ export class City {
 
   remove(key) {
     const ch = this.chunks.get(key); if (!ch) return;
+    ch.removed = true;
     for (const b of ch.blds) this.removeFromHash(b);
     this.scene.remove(ch.group);
     ch.group.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
     this.chunks.delete(key);
+  }
+
+  // set how burnt the flammable parts of a building are (0 = fresh, 1 = charred)
+  setBurn(b, v, quiet = false) {
+    for (const r of b.ranges) {
+      if (!FLAMMABLE[r.key]) continue;
+      const a = b.chunk.meshes[r.key].geometry.attributes.burn;
+      a.array.fill(v, r.start, r.start + r.count);
+      if (!quiet) this.dirty.add(a);
+    }
   }
 
   cells(b, fn) {

@@ -45,7 +45,7 @@ export class Crowd {
   }
 
   // player: {x, y, z}
-  update(dt, player) {
+  update(dt, player, fires) {
     const o = this.o, R2 = this.radius * this.radius * 1.3;
     const fearR = player.y > 6 ? 16 : 26;
     let fleeing = 0;
@@ -56,12 +56,15 @@ export class Crowd {
       if (d2 > R2) { this.respawn(i, player.x, player.z, 60, this.radius); continue; }
 
       let speed = this.spd[i];
-      if (d2 < fearR * fearR) {                       // scatter away from Hanuman
-        this.scared[i] = 3;
+      let rx = dx, rz = dz, scare = d2 < fearR * fearR;      // scatter away from Hanuman...
+      if (fires) for (let f = 0; f < fires.length; f += 2) {   // ...and from fires
+        const fx = x - fires[f], fz = z - fires[f + 1];
+        if (fx * fx + fz * fz < 400) { scare = true; rx = fx; rz = fz; break; }
       }
+      if (scare) this.scared[i] = 3;
       if (this.scared[i] > 0) {
         this.scared[i] -= dt;
-        const away = axis === 0 ? dz : dx;
+        const away = axis === 0 ? rz : rx;
         this.dir[i] = Math.abs(away) < 0.5 ? this.dir[i] : Math.sign(away);
         speed = 8.5;
         fleeing++;

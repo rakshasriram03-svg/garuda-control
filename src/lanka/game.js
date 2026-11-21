@@ -11,6 +11,7 @@ import { City } from './city.js';
 import { buildHanuman } from './hanuman.js';
 import { Player } from './player.js';
 import { Crowd } from './crowd.js';
+import { Fire } from './fire.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -114,6 +115,7 @@ const crowd = new Crowd(scene);
 const hanuman = buildHanuman();
 scene.add(hanuman.root, hanuman.tailGroup);
 const player = new Player(city);
+const fire = new Fire(scene, city);
 const ctl = new Controller();
 ctl.onStatus = (m) => { $('status').textContent = m; if (/alibrat|ange|swapped|normal|etup/.test(m)) flash(m); };
 
@@ -169,14 +171,20 @@ function loop(now) {
     for (const e of player.events.splice(0)) if (e === 'land') shake = Math.min(0.6, shake + 0.25);
   }
   city.update(player.x, player.z, 1);
-  crowd.update(dt, player);
-  hanuman.update(dt, { mode: player.mode, speed: player.animSpeed, yaw: player.yaw, x: player.x, y: player.y, z: player.z, t: clock });
+  crowd.update(dt, player, fire.centers(player.x, player.z));
+  hanuman.update(dt, { mode: player.mode, speed: player.animSpeed, yaw: player.yaw, x: player.x, y: player.y, z: player.z, t: clock, groundAt: (x, z) => city.groundAt(x, z) });
+  city.uniforms.uTime.value = clock;
+  fire.update(dt, hanuman.tailPts, renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360)));
+  if (started && Math.abs(ctl.spinRate) > 1 && fire.whip(player.x, player.z, 16)) {     // spin the controller (or Z / X): tail whip
+    const tip = hanuman.tailPts[hanuman.tailPts.length - 1];
+    fire.burst(tip.x, tip.y, tip.z); shake = Math.min(0.8, shake + 0.4); flash('TAIL WHIP!');
+  }
   updateCamera(dt);
 
   sun.position.set(player.x + sunDir.x * 350, player.y + sunDir.y * 350 + 60, player.z + sunDir.z * 350);
   sun.target.position.set(player.x, 0, player.z);
   $('mode').textContent = player.label;
-  $('info').textContent = `CITIZENS FLEEING ${crowd.fleeing}`;
+  $('info').textContent = `BURNED ${fire.burned}  ·  SCORE ${fire.score}  ·  CITIZENS FLEEING ${crowd.fleeing}`;
   $('ctl').textContent = ctl.source === 'ESP32' ? 'ESP32 • live' : ctl.source;
   $('ctl').className = ctl.source === 'ESP32' ? 'ok' : '';
   if (showDbg) {
@@ -190,4 +198,4 @@ function loop(now) {
 }
 requestAnimationFrame(loop);
 
-window.__lanka = { player, city, crowd, ctl, hanuman, camera, renderer };
+window.__lanka = { player, city, crowd, ctl, hanuman, camera, renderer, fire };

@@ -145,12 +145,13 @@ export function buildHanuman() {
       if (dir.lengthSq() < 1e-6) dir.set(0, 0, 1);
       dir.normalize().multiplyScalar(SEG);
       p.copy(prev).add(dir);
-      if (p.y < 0.15) p.y = 0.15;
+      const gy = st.groundAt ? st.groundAt(p.x, p.z) : 0;      // the tail rests on roofs too
+      if (p.y < gy + 0.2) p.y = gy + 0.2;
     }
     for (let i = 0; i < N; i++) tailMeshes[i].position.copy(tailPts[i]);
   }
 
   // handy for the fire system: where the tail tip is
   const tailTip = () => tailPts[N - 1];
-  return { root, tailGroup, update, tailTip, mace };
+  return { root, tailGroup, update, tailTip, mace, tailPts };
 }
