@@ -19,16 +19,15 @@ export class Controller {
     this.roll = 0; this.pitch = 0; this.boost = false;
     this.raw = { roll: 0, pitch: 0, btn: 0, spin: 0 };
     this.offset = { roll: 0, pitch: 0, spin: 0 };
-    // Calibrated from real ESP32 recordings: the sensor's pitch follows left/right tilt and its roll follows
-    // front/back tilt, so the axes are swapped and front-up must read as climb. Ranges are per SENSOR axis.
-    this.range = { roll: 36, pitch: 30 };
+    this.range = { roll: 28, pitch: 28 };     // full tilt in degrees, per SENSOR axis
     this.keys = new Set();
     this.serialActive = false;
     this.lastData = 0;
-    this.invertRoll = false; this.invertPitch = true; this.invertSpin = false; this.swapAxes = true;
+    this.invertRoll = false; this.invertPitch = false; this.invertSpin = false; this.swapAxes = false;
+    this.wiz = null; this.hasSaved = false;
     try {
       const sv = JSON.parse(localStorage.getItem('garuda-ctl-v1') || 'null');
-      if (sv) { this.range = sv.range; this.invertRoll = sv.invertRoll; this.invertPitch = sv.invertPitch; this.invertSpin = sv.invertSpin; this.swapAxes = sv.swapAxes; }
+      if (sv) { this.hasSaved = true; this.range = sv.range; this.invertRoll = sv.invertRoll; this.invertPitch = sv.invertPitch; this.invertSpin = sv.invertSpin; this.swapAxes = sv.swapAxes; }
     } catch (e) { /* no saved settings */ }
     this.viewFlip = false; this.spinRate = 0;
     this.cal = null; this.rng = null;
@@ -39,6 +38,7 @@ export class Controller {
       this.keys.add(e.code);
       if (e.code === 'KeyC') this.calibrate();
       if (e.code === 'KeyK') this.calibrateRange();
+      if (e.code === 'KeyO') this.startWizard();
       if (e.code === 'KeyR') this.invertRoll = !this.invertRoll;
       if (e.code === 'KeyI') this.invertPitch = !this.invertPitch;
       if (e.code === 'KeyY') this.invertSpin = !this.invertSpin;
@@ -85,9 +85,49 @@ export class Controller {
     this.onStatus('Range calibration - tilt fully left, right, forward and back for 4 s...');
   }
 
+  // Guided orientation setup: works out how the sensor is mounted from three poses (level, left, front-up).
+  startWizard() {
+    if (!this.live) { this.onStatus('Connect the controller first'); return; }
+    this.wiz = { step: 0, t0: performance.now(), n: 0, r: 0, p: 0, base: null, left: null };
+    this.onStatus('Setup 1/3 - hold the controller level and still');
+  }
+
+  wizFeed() {
+    const w = this.wiz, now = performance.now(), el = now - w.t0;
+    if (el > 900) { w.n++; w.r += this.raw.roll; w.p += this.raw.pitch; }
+    if (el < 2600 || w.n < 10) return;
+    const m = { roll: w.r / w.n, pitch: w.p / w.n };
+    if (w.step === 0) {
+      w.base = m; this.offset = { roll: m.roll, pitch: m.pitch, spin: this.raw.spin };
+      w.step = 1; this.onStatus('Setup 2/3 - tilt it LEFT and hold');
+    } else if (w.step === 1) {
+      w.left = { roll: m.roll - w.base.roll, pitch: m.pitch - w.base.pitch };
+      w.step = 2; this.onStatus('Setup 3/3 - level it first, then tilt the FRONT edge UP (nose up) and hold');
+    } else {
+      const up = { roll: m.roll - w.base.roll, pitch: m.pitch - w.base.pitch };
+      const lA = Math.abs(w.left.roll) >= Math.abs(w.left.pitch) ? 'roll' : 'pitch';
+      const uA = Math.abs(up.roll) >= Math.abs(up.pitch) ? 'roll' : 'pitch';
+      if (lA === uA || Math.abs(w.left[lA]) < 8 || Math.abs(up[uA]) < 8) {
+        this.wiz = null; this.onStatus('Setup failed - tilt clearly in each direction. Press O to try again'); return;
+      }
+      this.swapAxes = lA === 'pitch';
+      this.invertRoll = w.left[lA] > 0;
+      this.invertPitch = up[uA] > 0;
+      const rng = { roll: this.range.roll, pitch: this.range.pitch };
+      rng[lA] = Math.min(60, Math.max(12, Math.abs(w.left[lA]) * 0.85));
+      rng[uA] = Math.min(60, Math.max(12, Math.abs(up[uA]) * 0.85));
+      this.range = rng;
+      this.wiz = null; this.hasSaved = true; this.save();
+      this.onStatus('Controller setup complete');
+      return;
+    }
+    w.t0 = now; w.n = 0; w.r = 0; w.p = 0;
+  }
+
   // called for every line from the controller
   feed() {
     const now = performance.now();
+    if (this.wiz) this.wizFeed();
     if (this.cal) {
       const c = this.cal;
       c.n++; c.r += this.raw.roll; c.p += this.raw.pitch; c.s += this.raw.spin;
@@ -141,7 +181,7 @@ export class Controller {
             if (Number.isFinite(r) && Number.isFinite(pt)) {
               this.raw = { roll: r, pitch: pt, btn: +p[2] || 0, spin: parseFloat(p[3]) || 0 };
               this.lastData = performance.now();
-              if (first) { first = false; this.calibrate(); }
+              if (first) { first = false; if (this.hasSaved) this.calibrate(); else this.startWizard(); }
               this.feed();
             }
           }
@@ -177,9 +217,8 @@ export class Controller {
       } else this.padSpin = 0;
       this.source = gp ? 'Gamepad' : 'Keyboard';
     }
+    if (this.live) { if (this.invertRoll) tr = -tr; if (this.invertPitch) tp = -tp; }   // sensor mounting only affects the ESP32
     if (this.viewFlip) tr = -tr;           // front view mirrors left and right
-    if (this.invertRoll) tr = -tr;
-    if (this.invertPitch) tp = -tp;
     let sp = 0;
     if (this.live) { const s = this.raw.spin - this.offset.spin; sp = Math.abs(s) > 80 ? s : 0; }
     else sp = (this.keys.has('KeyX') ? 420 : 0) - (this.keys.has('KeyZ') ? 420 : 0) + this.padSpin;

@@ -187,7 +187,7 @@ function updateEmbers(dt, boosting) {
   emGeo.attributes.color.needsUpdate = true;
 }
 
-ctl.onStatus = (m) => { $('status').textContent = m; if (/alibrat|ange|swapped|normal/.test(m)) flash(m); };
+ctl.onStatus = (m) => { $('status').textContent = m; if (/alibrat|ange|swapped|normal|etup/.test(m)) flash(m); };
 let showDbg = false;
 addEventListener('keydown', (e) => { if (e.code === 'KeyG') { showDbg = !showDbg; $('dbg').style.display = showDbg ? 'block' : 'none'; } });
 $('connect').onclick = async () => { await ctl.connect(); };
