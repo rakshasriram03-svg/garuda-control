@@ -68,6 +68,16 @@ function loadTex(path, repeat = true) {
   return t;
 }
 
+// Only the two sky HDRIs (the Hanuman level does not need the rock models).
+export async function loadSkies() {
+  const hdr = await new RGBELoader().loadAsync(HDR);
+  hdr.mapping = THREE.EquirectangularReflectionMapping; hdr.colorSpace = THREE.LinearSRGBColorSpace;
+  const nhdr = await new RGBELoader().loadAsync(BASE + 'hdri/qwantani_night_puresky_2k.hdr');
+  nhdr.mapping = THREE.EquirectangularReflectionMapping; nhdr.colorSpace = THREE.LinearSRGBColorSpace;
+  const sun = analyseSky(hdr);
+  return { hdr, sun, horizon: horizonColor(hdr, sun.phi), night: { hdr: nhdr, sun: analyseSky(nhdr) } };
+}
+
 export async function loadAssets() {
   const hdr = await new RGBELoader().loadAsync(HDR);
   hdr.mapping = THREE.EquirectangularReflectionMapping;
