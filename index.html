@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garuda - fly with your own controller</title>
+<meta name="description" content="Fly Garuda, the divine eagle, through a golden-hour Indian temple valley. Play with keyboard, a gamepad or a DIY ESP32 + MPU6050 tilt controller you build yourself.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Garuda - a flight game you control with a DIY ESP32 tilt controller">
+<meta property="og:description" content="Fly Garuda through temples, waterfalls and floating islands at sunset or night. Keyboard, gamepad, or build the ESP32 + MPU6050 controller.">
+<meta property="og:image" content="https://rakshasriram03-svg.github.io/garuda-control/og.jpg">
+<meta property="og:url" content="https://rakshasriram03-svg.github.io/garuda-control/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A6%85%3C/text%3E%3C/svg%3E">
+<style>
+  :root { --gold:#ffc44d; --ink:#1a0d08; --glass:rgba(24,12,8,.45); }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; overflow:hidden; background:#1a0d08; color:#fbe9c4;
+    font-family:Georgia,'Noto Serif Devanagari',serif; }
+  canvas { position:fixed; inset:0; width:100%; height:100%; display:block; }
+  .hud { position:fixed; pointer-events:none; text-shadow:0 2px 12px rgba(0,0,0,.6); }
+  #tl { top:22px; left:28px; font-size:13px; letter-spacing:.3em; text-transform:uppercase; opacity:.85; }
+  #tl b { display:block; font-size:26px; letter-spacing:.12em; color:var(--gold); font-weight:400; }
+  #tr { top:20px; right:28px; text-align:right; }
+  #score { font-size:44px; color:var(--gold); line-height:1; }
+  #combo { font-size:22px; color:#fff; min-height:28px; }
+  #stats { margin-top:6px; font-size:13px; opacity:.8; letter-spacing:.12em; }
+  #bl { bottom:26px; left:28px; width:min(260px,40vw); font-size:11px; letter-spacing:.2em; text-transform:uppercase; }
+  .bar { height:5px; background:rgba(255,255,255,.18); border-radius:3px; margin:6px 0 10px; overflow:hidden; }
+  #stam { height:100%; width:100%; background:linear-gradient(90deg,#ff8a1f,#ffd36b); }
+  #ctl.ok { color:#9dffb0; }
+  #status { opacity:.7; margin-top:4px; text-transform:none; letter-spacing:.05em; }
+  #toast { position:fixed; top:30%; left:50%; transform:translate(-50%,0); font-size:34px; color:var(--gold);
+    opacity:0; transition:opacity .25s, transform .25s; pointer-events:none; text-shadow:0 2px 16px rgba(0,0,0,.7); }
+  #toast.show { opacity:1; transform:translate(-50%,-10px); }
+  #toast.bad { color:#ff8a7a; }
+  #intro { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(ellipse at center, rgba(40,16,8,.35), rgba(10,4,2,.78)); backdrop-filter:blur(3px);
+    transition:opacity .8s; }
+  #intro.hide { opacity:0; pointer-events:none; }
+  .card { text-align:center; padding:0 24px; max-width:560px; }
+  .card h1 { font-size:clamp(64px,12vw,120px); margin:0; font-weight:400; color:var(--gold); line-height:1;
+    text-shadow:0 0 40px rgba(255,160,40,.55); }
+  .card .sub { letter-spacing:.5em; text-transform:uppercase; font-size:12px; opacity:.8; margin:10px 0 28px; }
+  button { font:inherit; font-size:14px; letter-spacing:.2em; text-transform:uppercase; color:#fbe9c4; cursor:pointer;
+    background:var(--glass); border:1px solid rgba(255,196,77,.5); padding:13px 26px; margin:6px; border-radius:2px;
+    transition:background .2s, border-color .2s; pointer-events:auto; }
+  button:disabled { opacity:.55; cursor:wait; }
+  .how { margin-top:22px; font-size:12px; line-height:1.8; opacity:.8; letter-spacing:.06em; }
+  .how b { color:var(--gold); font-weight:400; letter-spacing:.14em; text-transform:uppercase; }
+  .foot { margin-top:18px; font-size:11px; opacity:.6; letter-spacing:.1em; }
+  .foot a { color:var(--gold); text-decoration:none; border-bottom:1px solid rgba(255,196,77,.4); }
+  .warn { margin-top:12px; font-size:12px; color:#ffb4a0; min-height:16px; }
+  button:hover { background:rgba(255,196,77,.18); border-color:var(--gold); }
+  button.main { background:var(--gold); color:var(--ink); border-color:var(--gold); }
+  .keys { margin-top:26px; font-size:12px; line-height:1.9; opacity:.7; letter-spacing:.08em; }
+  #dbg { display:none; top:92px; left:28px; font:12px/1.6 ui-monospace,Consolas,monospace; white-space:pre; background:rgba(0,0,0,.45); padding:10px 14px; border-radius:6px; letter-spacing:.04em; }
+  #calib { position:fixed; bottom:22px; right:28px; padding:8px 16px; font-size:11px; }
+</style>
+</head>
+<body>
+  <div id="tl" class="hud">Garuda<b>गरुड़</b></div>
+  <div id="tr" class="hud">
+    <div id="score">0</div><div id="combo"></div>
+    <div id="stats">RINGS <span id="rings">0</span> &nbsp;·&nbsp; <span id="dist">0 m</span></div>
+  </div>
+  <div id="bl" class="hud">
+    Boost<div class="bar"><div id="stam"></div></div>
+    Input: <span id="ctl">Keyboard</span>
+    <div id="status"></div>
+  </div>
+  <div id="toast"></div>
+  <div id="dbg" class="hud"></div>
+  <button id="calib" title="Set neutral (C)">Calibrate</button>
+
+  <div id="intro">
+    <div class="card">
+      <h1>गरुड़</h1>
+      <div class="sub">Vahana of Vishnu</div>
+      <button id="start" class="main" disabled>Loading the world...</button><br>
+      <button id="connect">Connect controller (USB)</button>
+      <div class="warn" id="warn"></div>
+      <div class="how">
+        <b>Play with</b> keyboard &nbsp;·&nbsp; gamepad &nbsp;·&nbsp; or your own <b>ESP32 + MPU6050</b> tilt controller<br>
+        (USB controller needs desktop Chrome or Edge - plug it in, then click Connect)
+      </div>
+      <div class="keys">
+        Tilt / ← → : steer &nbsp;·&nbsp; Tilt forward / ↓ : dive &nbsp;·&nbsp; ↑ : climb<br>
+        Space / button : boost &nbsp;·&nbsp; C : calibrate &nbsp;·&nbsp; R / I : invert &nbsp;·&nbsp; Q : quality<br>N : day / night &nbsp;·&nbsp; V : front view &nbsp;·&nbsp; T : top view &nbsp;·&nbsp; Z / X : spin<br>C : calibrate level &nbsp;·&nbsp; K : calibrate tilt range &nbsp;·&nbsp; - / = : sensitivity &nbsp;·&nbsp; U : swap axes &nbsp;·&nbsp; G : live numbers
+      </div>
+      <div class="foot">Open source &middot; <a href="https://github.com/rakshasriram03-svg/garuda-control" target="_blank" rel="noopener">code, ESP32 firmware &amp; build guide</a></div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

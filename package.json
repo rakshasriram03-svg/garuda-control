@@ -1,0 +1,9 @@
+{
+  "name": "garuda-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "dev": "vite --host", "build": "vite build" },
+  "dependencies": { "three": "^0.170.0" },
+  "devDependencies": { "vite": "^6.0.0" }
+}
